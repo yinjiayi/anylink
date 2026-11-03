@@ -121,6 +121,9 @@ func initRoute() http.Handler {
 	r.HandleFunc("/CSCOSSLC/tunnel", LinkTunnel).Methods(http.MethodConnect)
 	r.HandleFunc("/otp_qr", LinkOtpQr).Methods(http.MethodGet)
 	r.HandleFunc("/otp-verification", LinkAuth_otp).Methods(http.MethodPost)
+	r.HandleFunc("/+CSCOE+/sso/start", browserSSO.start).Methods(http.MethodGet)
+	r.HandleFunc(ssoCallbackPath, browserSSO.callback).Methods(http.MethodGet)
+	r.HandleFunc(ssoDonePath, SSODone).Methods(http.MethodGet)
 	// 添加Cisco AnyConnect兼容的SAML端点
 	r.HandleFunc("/+CSCOE+/saml/sp/login", SAMLSPLogin).Methods(http.MethodGet)
 	r.HandleFunc("/+CSCOE+/saml_ac_login.html", SAMLACLogin).Methods(http.MethodGet)

@@ -97,6 +97,10 @@ func WXAuthCallback(w http.ResponseWriter, r *http.Request) {
 
 // SAML回调端点 - 对应 sso-v2-login-final
 func SAMLACLogin(w http.ResponseWriter, r *http.Request) {
+	if marker, err := r.Cookie("anylink-sso-finish"); err == nil && marker.Value == "1" {
+		SSODone(w, r)
+		return
+	}
 	// 验证 Cookie 是否存在
 	encodeToken, err := GetCookie(r, "acSamlv2Token")
 	if err != nil || encodeToken == "" {

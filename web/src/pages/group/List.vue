@@ -225,8 +225,70 @@
                 <el-radio label="radius" border>Radius</el-radio>
                 <el-radio label="ldap" border>LDAP</el-radio>
                 <el-radio label="wxwork" border>企业微信</el-radio>
+                <el-radio label="oidc" border>OIDC</el-radio>
+                <el-radio label="oauth2" border>OAuth2</el-radio>
               </el-radio-group>
             </el-form-item>
+            <template v-if="isSSOAuth">
+              <el-form-item label="VPN外部地址" :prop="ssoProp('public_url')"
+                :rules="[{ validator: validatePublicURL, trigger: 'blur' }]">
+                <el-input v-model="ssoAuth.public_url" placeholder="https://vpn.example.com"></el-input>
+                <div class="msg-info">填写客户端访问的 HTTPS 地址，可包含端口，不含路径。身份提供方的回调地址：{{ ssoCallbackURL }}</div>
+              </el-form-item>
+              <el-form-item v-if="ruleForm.auth.type === 'oidc'" label="Issuer" :prop="ssoProp('issuer')"
+                :rules="[{ validator: validateHTTPSURL, trigger: 'blur' }]">
+                <el-input v-model="ssoAuth.issuer" placeholder="https://login.example.com/realms/company"></el-input>
+                <div class="msg-info">必须与身份提供方公布的 issuer 完全一致，服务端自动发现授权和令牌端点。</div>
+              </el-form-item>
+              <template v-if="ruleForm.auth.type === 'oauth2'">
+                <el-form-item label="授权端点" :prop="ssoProp('authorization_url')"
+                  :rules="[{ validator: validateHTTPSURL, trigger: 'blur' }]">
+                  <el-input v-model="ssoAuth.authorization_url" placeholder="https://login.example.com/oauth/authorize"></el-input>
+                </el-form-item>
+                <el-form-item label="令牌端点" :prop="ssoProp('token_url')"
+                  :rules="[{ validator: validateHTTPSURL, trigger: 'blur' }]">
+                  <el-input v-model="ssoAuth.token_url" placeholder="https://login.example.com/oauth/token"></el-input>
+                </el-form-item>
+                <el-form-item label="用户信息端点" :prop="ssoProp('userinfo_url')"
+                  :rules="[{ validator: validateHTTPSURL, trigger: 'blur' }]">
+                  <el-input v-model="ssoAuth.userinfo_url" placeholder="https://login.example.com/api/user"></el-input>
+                </el-form-item>
+                <el-form-item label="身份字段" :prop="ssoProp('subject_claim')"
+                  :rules="[{ required: true, whitespace: true, message: '请输入稳定身份字段，如 id', trigger: 'blur' }]">
+                  <el-input v-model="ssoAuth.subject_claim" placeholder="id"></el-input>
+                  <div class="msg-info">用户信息 JSON 顶层的不可变唯一字段，例如 id。不要使用可修改的显示名或邮箱。</div>
+                </el-form-item>
+              </template>
+              <el-form-item label="Client ID" :prop="ssoProp('client_id')"
+                :rules="[{ required: true, whitespace: true, message: '请输入 Client ID', trigger: 'blur' }]">
+                <el-input v-model="ssoAuth.client_id" autocomplete="off"></el-input>
+              </el-form-item>
+              <el-form-item label="Client Secret" :prop="ssoProp('client_secret')">
+                <el-input type="password" v-model="ssoAuth.client_secret" autocomplete="new-password" show-password></el-input>
+                <div class="msg-info">按身份提供方的客户端类型填写；仅允许公开客户端在提供方支持 PKCE 时留空。</div>
+              </el-form-item>
+              <el-form-item label="Scopes">
+                <el-input v-model="ssoScopesText[ruleForm.auth.type]" placeholder="多个 scope 用空格分隔"></el-input>
+                <div class="msg-info">OIDC 必须包含 openid。仅申请登录所需权限。</div>
+              </el-form-item>
+              <el-form-item label="浏览器模式" :prop="ssoProp('browser_mode')">
+                <el-radio-group v-model="ssoAuth.browser_mode">
+                  <el-radio label="auto">自动协商</el-radio>
+                  <el-radio label="internal">内置浏览器</el-radio>
+                  <el-radio label="external">系统浏览器</el-radio>
+                </el-radio-group>
+                <div class="msg-info">自动模式按客户端声明的 SSO 能力选择。系统浏览器要求兼容客户端和本地回调组件，需在实际终端验收。</div>
+              </el-form-item>
+              <el-form-item label="用户身份映射">
+                <el-input type="textarea" :rows="5" v-model="ssoSubjectUsersText[ruleForm.auth.type]"
+                  placeholder='{"身份提供方的稳定subject": "AnyLink用户名"}'></el-input>
+                <div class="msg-info">JSON 对象：OIDC 的 sub（或 OAuth2 身份字段值）映射到已有 AnyLink 用户名。用户须启用且属于此组；未映射用户不能登录，不会自动创建账号。</div>
+              </el-form-item>
+              <el-form-item>
+                <el-alert title="请在身份提供方启用所需 MFA 策略。此组的 SSO 流程不追加 AnyLink 本地 TOTP 验证。"
+                  type="info" :closable="false" show-icon></el-alert>
+              </el-form-item>
+            </template>
             <template v-if="ruleForm.auth.type == 'radius'">
               <el-form-item label="服务器地址" prop="auth.radius.addr"
                 :rules="this.ruleForm.auth.type == 'radius' ? this.rules['auth.radius.addr'] : [{ required: false }]">
@@ -514,6 +576,22 @@
 import axios from "axios";
 import draggable from 'vuedraggable'
 
+function ssoDefaults(type) {
+  return {
+    issuer: '',
+    client_id: '',
+    client_secret: '',
+    public_url: '',
+    scopes: type === 'oidc' ? ['openid', 'profile'] : [],
+    authorization_url: '',
+    token_url: '',
+    userinfo_url: '',
+    subject_claim: type === 'oauth2' ? 'id' : '',
+    browser_mode: 'auto',
+    subject_users: {},
+  };
+}
+
 export default {
   name: "List",
   components: { draggable },
@@ -525,6 +603,18 @@ export default {
   mounted() {
     this.getData(1);
     this.setAuthData();
+  },
+  computed: {
+    isSSOAuth() {
+      return ['oidc', 'oauth2'].includes(this.ruleForm.auth.type);
+    },
+    ssoAuth() {
+      return this.ruleForm.auth[this.ruleForm.auth.type] || {};
+    },
+    ssoCallbackURL() {
+      const origin = (this.ssoAuth.public_url || '').trim().replace(/\/$/, '');
+      return origin ? origin + '/+CSCOE+/sso/callback' : '填写 VPN 外部地址后显示';
+    },
   },
   data() {
     return {
@@ -557,7 +647,11 @@ export default {
           use_default_browser: false,
           allowed_departments: "",
         },
+        oidc: ssoDefaults('oidc'),
+        oauth2: ssoDefaults('oauth2'),
       },
+      ssoScopesText: { oidc: 'openid profile', oauth2: '' },
+      ssoSubjectUsersText: { oidc: '{}', oauth2: '{}' },
       ruleForm: {
         bandwidth: 0,
         bandwidth_format: '0',
@@ -645,14 +739,76 @@ export default {
       window.console.log("onEnd", this.ruleForm.link_acl);
     },
     setAuthData(row) {
-      if (!row) {
-        this.ruleForm.auth = JSON.parse(JSON.stringify(this.defAuth));
-        return;
+      const defaults = JSON.parse(JSON.stringify(this.defAuth));
+      const saved = row && row.auth ? JSON.parse(JSON.stringify(row.auth)) : {};
+      const auth = Object.assign({}, defaults, saved);
+      ['radius', 'ldap', 'wxwork', 'oidc', 'oauth2'].forEach(type => {
+        auth[type] = Object.assign({}, defaults[type], saved[type] || {});
+      });
+      if (!auth.ldap.object_class) {
+        auth.ldap.object_class = defaults.ldap.object_class;
       }
-      if (row.auth.type == "ldap" && !row.auth.ldap.object_class) {
-        row.auth.ldap.object_class = this.defAuth.ldap.object_class;
+      this.ruleForm.auth = auth;
+      ['oidc', 'oauth2'].forEach(type => {
+        this.$set(this.ssoScopesText, type, Array.isArray(auth[type].scopes) ? auth[type].scopes.join(' ') : '');
+        this.$set(this.ssoSubjectUsersText, type, JSON.stringify(auth[type].subject_users || {}, null, 2));
+      });
+    },
+    ssoProp(field) {
+      return 'auth.' + this.ruleForm.auth.type + '.' + field;
+    },
+    validateHTTPSURL(rule, value, callback) {
+      try {
+        const parsed = new URL(value);
+        if (typeof value !== 'string' || value !== value.trim() || parsed.protocol !== 'https:' ||
+            !parsed.hostname || parsed.username || parsed.password || parsed.hash) {
+          throw new Error('invalid URL');
+        }
+        callback();
+      } catch (error) {
+        callback(new Error('请输入有效 HTTPS 地址，不含用户名、密码或片段'));
       }
-      this.ruleForm.auth = Object.assign(JSON.parse(JSON.stringify(this.defAuth)), row.auth);
+    },
+    validatePublicURL(rule, value, callback) {
+      this.validateHTTPSURL(rule, value, error => {
+        if (error) {
+          callback(error);
+          return;
+        }
+        const parsed = new URL(value);
+        if ((parsed.pathname && parsed.pathname !== '/') || parsed.search) {
+          callback(new Error('VPN 外部地址只填写域名和可选端口，不含路径或查询参数'));
+          return;
+        }
+        callback();
+      });
+    },
+    prepareSSOAuth() {
+      if (!this.isSSOAuth) return true;
+      const type = this.ruleForm.auth.type;
+      let mappings;
+      try {
+        mappings = JSON.parse(this.ssoSubjectUsersText[type]);
+        if (mappings === null || Array.isArray(mappings) || typeof mappings !== 'object' ||
+            Object.keys(mappings).some(subject => !subject.trim() ||
+              typeof mappings[subject] !== 'string' || !mappings[subject].trim())) {
+          throw new Error('invalid mapping');
+        }
+      } catch (error) {
+        this.$message.error('用户身份映射必须是 JSON 对象，每个 subject 对应一个非空 AnyLink 用户名。');
+        return false;
+      }
+      const scopes = this.ssoScopesText[type].trim().split(/\s+/).filter(Boolean);
+      if (type === 'oidc' && !scopes.includes('openid')) {
+        this.$message.error('OIDC Scopes 必须包含 openid。');
+        return false;
+      }
+      this.ssoAuth.scopes = Array.from(new Set(scopes));
+      this.ssoAuth.subject_users = mappings;
+      if (typeof this.ssoAuth.public_url === 'string') {
+        this.ssoAuth.public_url = this.ssoAuth.public_url.replace(/\/$/, '');
+      }
+      return true;
     },
     handleDel(row) {
       axios.post('/group/del?id=' + row.id).then(resp => {
@@ -671,7 +827,6 @@ export default {
     },
     handleEdit(row) {
       !this.$refs['ruleForm'] || this.$refs['ruleForm'].resetFields();
-      console.log(row)
       this.user_edit_dialog = true
       if (!row) {
         this.setAuthData(row)
@@ -701,7 +856,6 @@ export default {
         }
       }).then(resp => {
         const rdata = resp.data.data;
-        console.log(rdata);
         this.tableData = rdata.datas;
         this.count = rdata.count
       }).catch(error => {
@@ -730,6 +884,7 @@ export default {
       this.newOtpState = newValue;
     },
     submitForm(formName) {
+      if (!this.prepareSSOAuth()) return;
       this.$refs[formName].validate((valid) => {
         if (!valid) {
           console.log('error submit!!');
