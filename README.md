@@ -164,6 +164,8 @@ sudo ./anylink
 
 本 fork 新增按用户组配置的 OAuth2 / OpenID Connect 认证，通过 AnyConnect SSO v2 打开登录网页，实现内置浏览器与外部浏览器加密回传流程。使用 Authorization Code + PKCE、OIDC token 校验和一次性 VPN 票据，外部身份须显式映射到已授权的本地用户。
 
+后台配置入口：**基础信息 → OAuth2 / OIDC**。选择用户组后可配置身份平台、应用凭据、回调地址、浏览器模式及用户身份映射。
+
 配置方式、客户端边界和验收步骤见 [OAuth2 / OIDC 接入文档](doc/sso-oidc.md)。自动化协议与模拟 IdP 测试不等于真实 AnyConnect 各平台互通；尚需在目标客户端和 IdP 上验证弹窗及隧道建立。
 
 ## Feature

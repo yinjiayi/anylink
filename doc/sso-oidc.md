@@ -34,9 +34,13 @@ AnyLink 在身份提供方（IdP）侧作为 OAuth2/OIDC 客户端，在 VPN 客
 
 AnyLink 向 IdP 注册的回调始终是上述 HTTPS 地址。`http://localhost:29786` 是部分 AnyConnect 客户端的本地外部浏览器回传地址，不应注册为 IdP 应用回调地址。
 
-## 配置 AnyLink 用户组
+## 后台配置页面
 
-在“用户组 → 编辑 → 认证方式”中选择 **OIDC** 或 **OAuth2**。
+打开后台侧边栏的 **基础信息 → OAuth2 / OIDC**（`/ui/#/admin/set/sso`），选择已有用户组，再选择 **OIDC** 或 **OAuth2**。页面会加载该组当前配置，显示回调地址，提供字段校验与保存操作；保存后，新登录请求使用所选认证方式。停用的用户组仍需先启用才能登录。
+
+此页只更新所选用户组的认证配置；组名、启用状态、路由、DNS 和访问规则保持原值。已保存的 Client Secret 不在此页回显，同一身份平台和 Client ID 下留空会保留原密钥；输入新值可替换，也可显式清除用于公开客户端。更换身份平台或 Client ID 后，需要填写新密钥，或明确选择不使用密钥。页面检测并发配置修改，遇到冲突应重新加载后保存。
+
+原“用户组信息 → 用户组列表 → 编辑 → 认证方式”入口仍可使用，并与独立页面共用 SSO 字段和校验。需要改回本地密码、LDAP 等认证方式时，在用户组编辑中修改。
 
 | 字段 | 说明 |
 | --- | --- |
@@ -62,7 +66,11 @@ OIDC 使用经验证的 `sub` 作为外部身份，不能用 `preferred_username
 
 这些 subject 是格式示例。应通过 IdP 的受信管理界面或受保护的身份查询获取实际值，不将用户自行填写的 subject 当作授权依据。OAuth2 数字身份也作为 JSON key 字符串填写，如 `"123456": "alice"`。
 
-保存后的组认证对象采用以下结构，可用于管理员 API 配置。Secret 留空是为了避免示例携带凭据；机密客户端部署时必须填写实际 Secret。
+管理员 API 均使用已有 `Jwt` 管理员认证。`GET /group/sso?id=<组ID>` 返回 `auth_type`、脱敏 `config`、`secret_set` 和 `revision`；`POST /group/sso/set` 使用 `Content-Type: application/json`，提交 `{id, config, revision, secret_action}`，其中 `config.type` 为 `oidc` 或 `oauth2`。`secret_action` 为 `preserve`（留空保留）、`replace`（提交新密钥）或 `clear`（显式清空）。遇到 `sso_config_conflict` 应重新读取并核对配置，不能重试覆盖。
+
+原 `/group/detail`、`/group/list` 也不再回传 SSO 密钥。自动化脚本若仍使用 `/group/set`，须先读取详情并携带 `auth_revision`，按同样规则设置 `sso_secret_action`，且使用 JSON 请求头；直接无版本覆盖已有组的旧请求将被拒绝。后台页面已同步适配。
+
+存储的组认证对象采用以下结构。Secret 留空是为了避免示例携带凭据；机密客户端部署时必须填写实际 Secret。
 
 ```json
 {
@@ -164,11 +172,15 @@ go test -mod=readonly -race ./...
 go vet -mod=readonly ./...
 go build -mod=readonly -trimpath .
 # web 目录
-yarn lint --no-fix src/pages/group/List.vue
+yarn lint --no-fix src/pages/set/SSO.vue src/pages/group/List.vue src/components/SSOConfigForm.vue src/utils/ssoConfig.js src/plugins/router.js src/layout/LayoutAside.vue
+node src/utils/ssoConfig.test.cjs
+node src/components/SSOConfigForm.test.cjs
 yarn build
 ```
 
 测试涵盖受信 TLS 模拟 OIDC/OAuth2 提供方、JWKS/签名/nonce/PKCE、独立 ECIES 解密向量、完整浏览器回调与 VPN 票据兑换、跨会话/跨组重放、账号与组授权复验、并发单次消费、过期与资源上限，以及旧证书/OTP/企微会话不能绕过新 SSO 组策略。没有在真实 IdP、Cisco 客户端或五种操作系统实机上完成登录和隧道测试。
+
+配置管理测试覆盖专用页和原组编辑入口的密钥保留/替换/清除、跨身份平台保护、并发修改拒绝、无变化保存，以及路由/DNS/ACL 不被专用接口覆盖。数据库运行测试使用 SQLite；其他数据库分支尚需真实环境验证。另使用隔离浏览器和模拟后台 API 检查独立页的 OIDC/OAuth2 保存回读、字段校验、未保存切组、冲突提示、停用组提示和 1024px 布局；这不代表真实 IdP 联调通过。
 
 代码和自动化测试提供验证基础，但模拟 IdP 与协议测试不等于实际 AnyConnect GUI 互通。真实 IdP 注册、MFA、客户端弹窗、浏览器回调和 VPN 隧道建立必须在目标环境完成验收，并记录构建版本。
 

@@ -2,7 +2,9 @@ package admin
 
 import (
 	"encoding/json"
+	"errors"
 	"io"
+	"mime"
 	"net/http"
 	"strconv"
 
@@ -11,6 +13,7 @@ import (
 )
 
 func GroupList(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Cache-Control", "no-store")
 	_ = r.ParseForm()
 	pageS := r.FormValue("page")
 	page, _ := strconv.Atoi(pageS)
@@ -27,6 +30,12 @@ func GroupList(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		RespError(w, RespInternalErr, err)
 		return
+	}
+	for i := range datas {
+		if err := dbdata.PrepareGroupForAdmin(&datas[i]); err != nil {
+			groupSSOError(w, err)
+			return
+		}
 	}
 
 	data := map[string]interface{}{
@@ -59,6 +68,7 @@ func GroupNamesIds(w http.ResponseWriter, r *http.Request) {
 }
 
 func GroupDetail(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Cache-Control", "no-store")
 	_ = r.ParseForm()
 	idS := r.FormValue("id")
 	id, _ := strconv.Atoi(idS)
@@ -73,8 +83,9 @@ func GroupDetail(w http.ResponseWriter, r *http.Request) {
 		RespError(w, RespInternalErr, err)
 		return
 	}
-	if len(data.Auth) == 0 {
-		data.Auth["type"] = "local"
+	if err := dbdata.PrepareGroupForAdmin(&data); err != nil {
+		groupSSOError(w, err)
+		return
 	}
 	// 兼容旧数据
 	if data.SplitDns == nil {
@@ -84,22 +95,32 @@ func GroupDetail(w http.ResponseWriter, r *http.Request) {
 }
 
 func GroupSet(w http.ResponseWriter, r *http.Request) {
-	body, err := io.ReadAll(r.Body)
+	w.Header().Set("Cache-Control", "no-store")
+	contentType, _, err := mime.ParseMediaType(r.Header.Get("Content-Type"))
+	if err != nil || contentType != "application/json" {
+		RespError(w, RespParamErr, "sso_content_type_required")
+		return
+	}
+	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, 1<<20))
 	if err != nil {
-		RespError(w, RespInternalErr, err)
+		RespError(w, RespParamErr, "sso_request_invalid")
 		return
 	}
 	defer r.Body.Close()
 	v := &dbdata.Group{}
 	err = json.Unmarshal(body, v)
 	if err != nil {
-		RespError(w, RespInternalErr, err)
+		RespError(w, RespParamErr, "sso_request_invalid")
 		return
 	}
 
-	err = dbdata.SetGroup(v)
+	err = dbdata.SetGroupFromAdmin(v)
 	if err != nil {
-		RespError(w, RespInternalErr, err)
+		if errors.Is(err, dbdata.ErrGroupWrite) {
+			RespError(w, RespInternalErr, dbdata.ErrGroupWrite.Error())
+		} else {
+			RespError(w, RespParamErr, err)
+		}
 		return
 	}
 

@@ -22,6 +22,9 @@ type Group struct {
 	Status           int8                   `json:"status" xorm:"Int"`    // 1正常
 	CreatedAt        time.Time              `json:"created_at" xorm:"DateTime created"`
 	UpdatedAt        time.Time              `json:"updated_at" xorm:"DateTime updated"`
+	AuthRevision     string                 `json:"auth_revision,omitempty" xorm:"-"`
+	SSOSecretSet     bool                   `json:"sso_secret_set" xorm:"-"`
+	SSOSecretAction  string                 `json:"sso_secret_action,omitempty" xorm:"-"`
 }
 
 type User struct {

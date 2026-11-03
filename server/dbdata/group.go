@@ -120,6 +120,10 @@ func GetGroupNamesIds() []GroupNameId {
 }
 
 func SetGroup(g *Group) error {
+	return setGroup(g, nil)
+}
+
+func setGroup(g *Group, authGuard *groupSSORow) error {
 	var err error
 	if g.Name == "" {
 		return errors.New("用户组名错误")
@@ -300,7 +304,10 @@ func SetGroup(g *Group) error {
 	if len(g.Auth) == 0 {
 		g.Auth = defAuth
 	}
-	authType := g.Auth["type"].(string)
+	authType, ok := g.Auth["type"].(string)
+	if !ok {
+		return errors.New("未知的认证方式")
+	}
 	if authType == "local" {
 		g.Auth = defAuth
 	} else {
@@ -321,11 +328,21 @@ func SetGroup(g *Group) error {
 
 	g.UpdatedAt = time.Now()
 	if g.Id > 0 {
-		err = Set(g)
+		if authGuard == nil {
+			err = Set(g)
+		} else {
+			session := xdb.ID(g.Id).AllCols()
+			defer session.Close()
+			applyGroupAuthGuard(session, *authGuard)
+			changed, updateErr := session.Update(g)
+			err = checkGroupAuthUpdate(changed, updateErr, *authGuard, g.Auth)
+		}
 	} else {
 		err = Add(g)
 	}
-
+	if err != nil && !errors.Is(err, ErrSSOConfigConflict) {
+		return fmt.Errorf("%w: %v", ErrGroupWrite, err)
+	}
 	return err
 }
 
