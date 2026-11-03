@@ -6,7 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
-	"path"
+	"path/filepath"
 	"testing"
 
 	"github.com/bjdgyc/anylink/base"
@@ -115,7 +115,7 @@ func TestLinkAuthOtp(t *testing.T) {
 	base.Cfg.DisplayError = true
 
 	// 设置测试数据库
-	preIpData()
+	preIpData(t)
 	defer closeIpdata()
 
 	// 创建测试组
@@ -256,7 +256,7 @@ func TestCreateSession(t *testing.T) {
 	base.Test()
 	ast := assert.New(t)
 
-	preIpData()
+	preIpData(t)
 	defer closeIpdata()
 
 	base.Cfg.EnableBanner = true
@@ -323,12 +323,13 @@ func TestCreateSession(t *testing.T) {
 	ast.NotContains(w2.Body.String(), "测试横幅内容")
 }
 
-func preIpData() {
+func preIpData(t *testing.T) {
+	t.Helper()
 	// 设置测试模式
 	base.Test()
 
 	// 创建临时数据库文件
-	tmpDb := path.Join(os.TempDir(), "anylink_otp_test.db")
+	tmpDb := filepath.Join(t.TempDir(), "anylink_otp_test.db")
 
 	// 设置数据库配置
 	base.Cfg.DbType = "sqlite3"
@@ -348,7 +349,10 @@ func preIpData() {
 }
 
 func closeIpdata() {
+	// The audit pool has one worker. Drain preceding asynchronous writes before
+	// closing SQLite or reassigning the package-global database in another test.
+	drained := make(chan struct{})
+	dbdata.UserActLogIns.Pool.JobQueue <- func() { close(drained) }
+	<-drained
 	_ = dbdata.Stop()
-	tmpDb := path.Join(os.TempDir(), "anylink_otp_test.db")
-	os.Remove(tmpDb)
 }

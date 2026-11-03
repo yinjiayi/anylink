@@ -25,6 +25,13 @@ type ClientRequest struct {
 	Auth                 auth           `xml:"auth"`
 	DeviceId             deviceId       `xml:"device-id"`
 	MacAddressList       macAddressList `xml:"mac-address-list"`
+	Capabilities         struct {
+		AuthMethods []string `xml:"auth-method"`
+	} `xml:"capabilities"`
+	Opaque struct {
+		SSOChallenge string `xml:"sso-session-id"`
+		Group        string `xml:"tunnel-group"`
+	} `xml:"opaque"`
 }
 
 type auth struct {

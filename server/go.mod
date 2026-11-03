@@ -6,6 +6,7 @@ toolchain go1.24.7
 
 require (
 	github.com/arl/statsviz v0.6.0
+	github.com/coreos/go-oidc/v3 v3.17.0
 	github.com/deckarep/golang-set v1.8.0
 	github.com/denisenkom/go-mssqldb v0.12.3
 	github.com/go-acme/lego/v4 v4.19.2
@@ -39,6 +40,7 @@ require (
 	github.com/xuri/excelize/v2 v2.9.0
 	golang.org/x/crypto v0.48.0
 	golang.org/x/net v0.49.0
+	golang.org/x/oauth2 v0.35.0
 	golang.org/x/text v0.34.0
 	golang.org/x/time v0.14.0
 	layeh.com/radius v0.0.0-20231213012653-1006025d24f8
@@ -52,7 +54,7 @@ require (
 	github.com/cenkalti/backoff/v4 v4.3.0 // indirect
 	github.com/cloudflare/cloudflare-go v0.109.0 // indirect
 	github.com/felixge/httpsnoop v1.0.4 // indirect
-	github.com/go-jose/go-jose/v4 v4.0.5 // indirect
+	github.com/go-jose/go-jose/v4 v4.1.3 // indirect
 	github.com/go-test/deep v1.1.0 // indirect
 	github.com/golang-sql/civil v0.0.0-20220223132316-b832511892a9 // indirect
 	github.com/golang-sql/sqlexp v0.1.0 // indirect

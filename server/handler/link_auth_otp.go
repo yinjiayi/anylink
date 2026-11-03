@@ -203,6 +203,13 @@ func LinkAuth_otp(w http.ResponseWriter, r *http.Request) {
 
 	ua := sessionData.UserActLog
 	username := sessionData.ClientRequest.Auth.Username
+	if isBrowserSSOGroup(sessionData.ClientRequest.GroupSelect) {
+		// A pending legacy OTP login must not bypass a group's new SSO policy.
+		SessStore.DeleteAuthSession(sessionID)
+		DeleteCookie(w, "auth-session-id")
+		ssoError(w, http.StatusForbidden)
+		return
+	}
 	otpSecret := sessionData.ClientRequest.Auth.OtpSecret
 	otp := cr.Auth.SecondaryPassword
 

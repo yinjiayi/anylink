@@ -19,6 +19,7 @@ const routes = [
             { path: 'set/system', component: () => import('@/pages/set/System') },
             { path: 'set/soft', component: () => import('@/pages/set/Soft') },
             { path: 'set/other', component: () => import('@/pages/set/Other') },
+            { path: 'set/sso', component: () => import('@/pages/set/SSO') },
             { path: 'set/audit', component: () => import('@/pages/set/Audit') },
 
             { path: 'user/list', component: () => import('@/pages/user/List') },
@@ -47,7 +48,6 @@ router.beforeEach((to, from, next) => {
 
     const token = getToken();
 
-    console.log("beforeEach", from.path, to.path, token)
     // console.log(from)
     // 无论认证状态都允许访问重置页
     if (to.path === '/forgotPassword' || to.path === '/resetPassword') {

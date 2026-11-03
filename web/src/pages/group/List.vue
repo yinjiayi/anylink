@@ -132,9 +132,10 @@
 
     <!--新增、修改弹出框-->
     <el-dialog :close-on-click-modal="false" title="用户组" :visible.sync="user_edit_dialog" width="850px"
-      @close='closeDialog' center>
+      :show-close="!groupSaving" :close-on-press-escape="!groupSaving" @close='closeDialog' center>
 
-      <el-form :model="ruleForm" :rules="rules" ref="ruleForm" label-width="100px" class="ruleForm">
+      <el-form :model="ruleForm" :rules="rules" ref="ruleForm" label-width="100px" class="ruleForm"
+        :disabled="editLoading || groupSaving" v-loading="editLoading">
         <el-tabs v-model="activeTab" :before-leave="beforeTabLeave">
           <el-tab-pane label="通用" name="general">
             <el-form-item label="用户组ID" prop="id">
@@ -225,7 +226,18 @@
                 <el-radio label="radius" border>Radius</el-radio>
                 <el-radio label="ldap" border>LDAP</el-radio>
                 <el-radio label="wxwork" border>企业微信</el-radio>
+                <el-radio label="oidc" border>OIDC</el-radio>
+                <el-radio label="oauth2" border>OAuth2</el-radio>
               </el-radio-group>
+            </el-form-item>
+            <SSOConfigForm v-if="user_edit_dialog && isSSOAuth" ref="ssoConfigForm"
+              :key="ruleForm.id + ':' + ruleForm.auth.type" :type="ruleForm.auth.type"
+              v-model="ruleForm.auth[ruleForm.auth.type]" :secret-set="ssoSecretSet"></SSOConfigForm>
+            <el-form-item v-if="isSSOAuth && savedSSOSecretSet" label="密钥操作">
+              <div v-if="!ssoSecretSet" class="msg-info">身份平台或 Client ID 已变更，请填写新密钥，或明确选择不使用密钥。</div>
+              <el-checkbox v-model="clearSSOSecret" :disabled="!!currentSSOConfig.client_secret">
+                {{ ssoSecretSet ? '清除已保存的 Client Secret（仅用于公开客户端）' : '新的身份平台使用公开客户端（不使用 Client Secret）' }}
+              </el-checkbox>
             </el-form-item>
             <template v-if="ruleForm.auth.type == 'radius'">
               <el-form-item label="服务器地址" prop="auth.radius.addr"
@@ -459,8 +471,8 @@
               v-if="activeTab == 'authtype' && (ruleForm.auth.type == 'ldap' || ruleForm.auth.type == 'radius')">
               <el-button @click="openAuthLoginDialog()" style="margin-right:10px">测试登录</el-button>
             </templete>
-            <el-button type="primary" @click="submitForm('ruleForm')">保存</el-button>
-            <el-button @click="closeDialog">取消</el-button>
+            <el-button type="primary" :loading="groupSaving" :disabled="editLoading" @click="submitForm('ruleForm')">保存</el-button>
+            <el-button :disabled="groupSaving" @click="closeDialog">取消</el-button>
             <templete v-if="activeTab == 'authtype' && ruleForm.auth.type == 'ldap'">
               <el-button type="success" @click="saveldapUsers" :loading="saveLoading"
                 style="margin-left:10px">同步用户</el-button>
@@ -514,9 +526,35 @@
 import axios from "axios";
 import draggable from 'vuedraggable'
 
+import SSOConfigForm from '@/components/SSOConfigForm.vue';
+import { ssoDefaults } from '@/utils/ssoConfig';
+
+function groupDefaults() {
+  return {
+    id: 0,
+    name: '',
+    note: '',
+    bandwidth: 0,
+    bandwidth_format: '0',
+    status: 1,
+    allow_lan: true,
+    client_dns: [{ val: '114.114.114.114', note: '默认dns' }],
+    split_dns: [],
+    route_include: [{ val: 'all', note: '默认全局代理' }],
+    route_exclude: [],
+    link_acl: [],
+    ds_include_domains: '',
+    ds_exclude_domains: '',
+    auth: {},
+    auth_revision: '',
+    sso_secret_set: false,
+    sso_secret_action: 'preserve',
+  };
+}
+
 export default {
   name: "List",
-  components: { draggable },
+  components: { draggable, SSOConfigForm },
   mixins: [],
   created() {
     this.$emit('update:route_path', this.$route.path)
@@ -525,6 +563,20 @@ export default {
   mounted() {
     this.getData(1);
     this.setAuthData();
+  },
+  computed: {
+    isSSOAuth() {
+      return ['oidc', 'oauth2'].includes(this.ruleForm.auth.type);
+    },
+    currentSSOConfig() {
+      return this.ruleForm.auth[this.ruleForm.auth.type] || {};
+    },
+    ssoSecretSet() {
+      if (!this.savedSSOSecretSet || this.ruleForm.auth.type !== this.savedSSOAuthType) return false;
+      const fields = this.ruleForm.auth.type === 'oidc'
+        ? ['issuer', 'client_id'] : ['authorization_url', 'token_url', 'userinfo_url', 'client_id'];
+      return fields.every(field => (this.currentSSOConfig[field] || '') === (this.savedSSOConfig[field] || ''));
+    },
   },
   data() {
     return {
@@ -557,19 +609,17 @@ export default {
           use_default_browser: false,
           allowed_departments: "",
         },
+        oidc: ssoDefaults('oidc'),
+        oauth2: ssoDefaults('oauth2'),
       },
-      ruleForm: {
-        bandwidth: 0,
-        bandwidth_format: '0',
-        status: 1,
-        allow_lan: true,
-        client_dns: [{ val: '114.114.114.114', note: '默认dns' }],
-        split_dns: [],
-        route_include: [{ val: 'all', note: '默认全局代理' }],
-        route_exclude: [],
-        link_acl: [],
-        auth: {},
-      },
+      ruleForm: groupDefaults(),
+      savedSSOAuthType: '',
+      savedSSOConfig: {},
+      savedSSOSecretSet: false,
+      clearSSOSecret: false,
+      editLoading: false,
+      editRequestId: 0,
+      groupSaving: false,
       authLoginDialog: false,
       saveLoading: false,
       ipListDialog: false,
@@ -645,14 +695,16 @@ export default {
       window.console.log("onEnd", this.ruleForm.link_acl);
     },
     setAuthData(row) {
-      if (!row) {
-        this.ruleForm.auth = JSON.parse(JSON.stringify(this.defAuth));
-        return;
+      const defaults = JSON.parse(JSON.stringify(this.defAuth));
+      const saved = row && row.auth ? JSON.parse(JSON.stringify(row.auth)) : {};
+      const auth = Object.assign({}, defaults, saved);
+      ['radius', 'ldap', 'wxwork', 'oidc', 'oauth2'].forEach(type => {
+        auth[type] = Object.assign({}, defaults[type], saved[type] || {});
+      });
+      if (!auth.ldap.object_class) {
+        auth.ldap.object_class = defaults.ldap.object_class;
       }
-      if (row.auth.type == "ldap" && !row.auth.ldap.object_class) {
-        row.auth.ldap.object_class = this.defAuth.ldap.object_class;
-      }
-      this.ruleForm.auth = Object.assign(JSON.parse(JSON.stringify(this.defAuth)), row.auth);
+      this.ruleForm.auth = auth;
     },
     handleDel(row) {
       axios.post('/group/del?id=' + row.id).then(resp => {
@@ -669,26 +721,42 @@ export default {
         console.log(error);
       });
     },
-    handleEdit(row) {
-      !this.$refs['ruleForm'] || this.$refs['ruleForm'].resetFields();
-      console.log(row)
-      this.user_edit_dialog = true
-      if (!row) {
-        this.setAuthData(row)
-        return;
-      }
-      axios.get('/group/detail', {
-        params: {
-          id: row.id,
+    async handleEdit(row) {
+      if (this.groupSaving) return;
+      const requestId = ++this.editRequestId;
+      // Start every create/edit operation with a fresh form. resetFields alone
+      // retains unknown properties such as the previous id and auth revision.
+      this.ruleForm = groupDefaults();
+      this.setAuthData();
+      this.savedSSOAuthType = '';
+      this.savedSSOConfig = {};
+      this.savedSSOSecretSet = false;
+      this.clearSSOSecret = false;
+      this.otpChanged = false;
+      this.activeTab = 'general';
+      this.editLoading = !!row;
+      this.user_edit_dialog = true;
+      await this.$nextTick();
+      if (this.$refs.ruleForm) this.$refs.ruleForm.clearValidate();
+      if (!row) return;
+      try {
+        const { data } = await axios.get('/group/detail', { params: { id: row.id } });
+        if (requestId !== this.editRequestId || !this.user_edit_dialog) return;
+        if (data.code !== 0 || !data.data) throw new Error(data.msg || '加载用户组失败');
+        this.ruleForm = Object.assign(groupDefaults(), data.data);
+        this.ruleForm.bandwidth_format = this.convertBandwidth(this.ruleForm.bandwidth, 'BYTE', 'Mbps').toString();
+        this.setAuthData(data.data);
+        this.savedSSOAuthType = this.ruleForm.auth.type;
+        this.savedSSOConfig = JSON.parse(JSON.stringify(this.currentSSOConfig));
+        this.savedSSOSecretSet = !!data.data.sso_secret_set;
+      } catch (error) {
+        if (requestId === this.editRequestId) {
+          this.$message.error('加载用户组失败，请重新打开编辑。');
+          this.user_edit_dialog = false;
         }
-      }).then(resp => {
-        resp.data.data.bandwidth_format = this.convertBandwidth(resp.data.data.bandwidth, 'BYTE', 'Mbps').toString();
-        this.ruleForm = resp.data.data;
-        this.setAuthData(resp.data.data);
-      }).catch(error => {
-        this.$message.error('哦，请求出错');
-        console.log(error);
-      });
+      } finally {
+        if (requestId === this.editRequestId) this.editLoading = false;
+      }
     },
     pageChange(p) {
       this.getData(p)
@@ -701,7 +769,6 @@ export default {
         }
       }).then(resp => {
         const rdata = resp.data.data;
-        console.log(rdata);
         this.tableData = rdata.datas;
         this.count = rdata.count
       }).catch(error => {
@@ -729,35 +796,49 @@ export default {
       this.otpChanged = true;
       this.newOtpState = newValue;
     },
-    submitForm(formName) {
-      this.$refs[formName].validate((valid) => {
-        if (!valid) {
-          console.log('error submit!!');
-          return false;
+    async submitForm(formName) {
+      if (this.groupSaving || this.editLoading) return;
+      this.groupSaving = true;
+      try {
+        if (this.isSSOAuth && !(await this.$refs.ssoConfigForm.validate())) {
+          this.activeTab = 'authtype';
+          return;
         }
+        if (this.isSSOAuth && this.savedSSOSecretSet && !this.ssoSecretSet &&
+            !this.currentSSOConfig.client_secret && !this.clearSSOSecret) {
+          this.activeTab = 'authtype';
+          this.$message.error('身份平台或 Client ID 已变更，请填写新密钥，或选择公开客户端。');
+          return;
+        }
+        const valid = await new Promise(resolve => this.$refs[formName].validate(resolve));
+        if (!valid) return;
+        this.ruleForm.sso_secret_action = this.isSSOAuth && this.currentSSOConfig.client_secret
+          ? 'replace' : this.isSSOAuth && this.clearSSOSecret ? 'clear' : 'preserve';
         this.ruleForm.bandwidth = this.convertBandwidth(this.ruleForm.bandwidth_format, 'Mbps', 'BYTE');
-        axios.post('/group/set', this.ruleForm).then(resp => {
-          const rdata = resp.data;
-          if (rdata.code === 0) {
-            this.$message.success(rdata.msg);
-            // 如果 OTP 状态发生变化，触发用户同步  
-            if (this.ruleForm.auth.type === 'ldap' && this.otpChanged) {
-              this.saveldapUsers();
-            }
-            // 重置变化标记
-            this.otpChanged = false;
-
-            this.getData(1);
-            this.user_edit_dialog = false
-          } else {
-            this.$message.error(rdata.msg);
-          }
-          console.log(rdata);
-        }).catch(error => {
-          this.$message.error('哦，请求出错');
-          console.log(error);
+        const { data } = await axios.post('/group/set', this.ruleForm, {
+          headers: { 'Content-Type': 'application/json' },
         });
-      });
+        if (data.code !== 0) {
+          const messages = {
+            sso_config_conflict: '认证配置已被其他页面修改，请重新打开编辑后再保存。',
+            sso_provider_changed_secret_action_required: '身份平台已变更，请填写新密钥，或选择公开客户端。',
+            sso_group_not_found: '此用户组已删除，请刷新用户组列表。',
+            sso_secret_required: '请输入新的 Client Secret。',
+          };
+          this.$message.error(messages[data.msg] || data.msg || '保存失败，请重试。');
+          return;
+        }
+        this.$message.success(data.msg);
+        if (this.ruleForm.auth.type === 'ldap' && this.otpChanged) this.saveldapUsers();
+        this.otpChanged = false;
+        this.getData(1);
+        this.user_edit_dialog = false;
+      } catch (error) {
+        // Axios errors may contain the submitted client secret in config.data.
+        this.$message.error('保存失败，请稍后重试。');
+      } finally {
+        this.groupSaving = false;
+      }
     },
     saveldapUsers() {
       this.saveLoading = true;
@@ -890,6 +971,7 @@ export default {
       }
     },
     authTypeChange() {
+      this.clearSSOSecret = false;
       this.$refs['ruleForm'].clearValidate();
     },
     beforeTabLeave() {
@@ -907,6 +989,9 @@ export default {
       return isSwitch;
     },
     closeDialog() {
+      if (this.groupSaving) return;
+      this.editRequestId++;
+      this.editLoading = false;
       this.user_edit_dialog = false;
       this.activeTab = "general";
     },

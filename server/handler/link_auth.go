@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"net/http/httputil"
 	"net/url"
 	"strings"
 	"text/template"
@@ -23,11 +22,7 @@ var (
 )
 
 func LinkAuth(w http.ResponseWriter, r *http.Request) {
-	// TODO 调试信息输出
-	if base.GetLogLevel() == base.LogLevelTrace {
-		hd, _ := httputil.DumpRequest(r, true)
-		base.Trace("LinkAuth: ", string(hd))
-	}
+	// Do not dump authentication bodies: they contain passwords and SSO tickets.
 	// 判断anyconnect客户端
 	userAgent := strings.ToLower(r.UserAgent())
 	xAggregateAuth := r.Header.Get("X-Aggregate-Auth")
@@ -39,7 +34,7 @@ func LinkAuth(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	body, err := io.ReadAll(r.Body)
+	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, 128<<10))
 	if err != nil {
 		w.WriteHeader(http.StatusBadRequest)
 		return
@@ -56,7 +51,10 @@ func LinkAuth(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusBadRequest)
 		return
 	}
-	base.Trace(fmt.Sprintf("%+v \n", cr))
+	if err := browserSSONegotiations.remember(w, r, cr); err != nil {
+		ssoError(w, http.StatusBadRequest)
+		return
+	}
 	// 用户活动日志
 	ua := &dbdata.UserActLog{
 		Username:        cr.Auth.Username,
@@ -86,8 +84,7 @@ func LinkAuth(w http.ResponseWriter, r *http.Request) {
 	// SSO 认证（如企业微信）可能在认证初期也带有空组，需要特别处理
 	if cr.GroupSelect == "" {
 		// Cisco AnyConnect 移动端在发起连接请求时，会发送空用户组
-		if cr.Auth.SsoToken != "" || cr.Type == "init" {
-			base.Debug("允许 SSO 认证请求通过，SsoToken:", cr.Auth.SsoToken)
+		if cr.Auth.SsoToken != "" || cr.Type == "init" || cr.Opaque.SSOChallenge != "" {
 		} else if !strings.Contains(userAgent, "openconnect") {
 			w.WriteHeader(http.StatusBadRequest)
 			return
@@ -98,15 +95,44 @@ func LinkAuth(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusBadRequest)
 		return
 	}
+	// New browser SSO has its own single-use store; never send its tickets to
+	// the legacy WeCom/OTP session store or allow password/certificate fallback.
+	if cr.Opaque.SSOChallenge != "" {
+		if cr.Type != "auth-reply" || cr.Auth.SsoToken == "" || base.Cfg.AuthOnlyCert {
+			ssoError(w, http.StatusForbidden)
+			return
+		}
+		browserSSO.redeem(w, r, cr, ua)
+		return
+	}
+	if isBrowserSSOGroup(cr.GroupSelect) {
+		cfg, err := browserSSO.loadConfig(cr.GroupSelect)
+		if err != nil || base.Cfg.AuthOnlyCert || cr.Auth.SsoToken != "" ||
+			(cr.Type != "init" && cr.Type != "auth-reply") {
+			ssoError(w, http.StatusForbidden)
+			return
+		}
+		browserSSO.begin(w, r, cr, cfg)
+		return
+	}
 	// 检查客户端证书认证
 	if base.Cfg.AuthCert {
 		if r.TLS != nil && len(r.TLS.PeerCertificates) > 0 {
 			clientCert := r.TLS.PeerCertificates[0]
 			username := clientCert.Subject.CommonName
+			if len(clientCert.Subject.OrganizationalUnit) == 0 {
+				w.WriteHeader(http.StatusBadRequest)
+				return
+			}
 			groupname := clientCert.Subject.OrganizationalUnit[0]
 			if username == "" || groupname == "" {
 				base.Warn("客户端证书缺少用户名或组名")
 				w.WriteHeader(http.StatusBadRequest)
+				return
+			}
+			if isBrowserSSOGroup(groupname) {
+				// A certificate for a group switched to SSO cannot bypass its IdP.
+				ssoError(w, http.StatusForbidden)
 				return
 			}
 			ua.Username = username
@@ -215,6 +241,13 @@ func LinkAuth(w http.ResponseWriter, r *http.Request) {
 		samlSession, err := SessStore.GetAuthSession(decodeToken)
 		if err != nil {
 			base.Error("会话不存在")
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		// Legacy SSO may only complete a currently enabled WeCom group.
+		legacyGroup := &dbdata.Group{}
+		if dbdata.One("Name", samlSession.ClientRequest.GroupSelect, legacyGroup) != nil ||
+			legacyGroup.Status != 1 || legacyGroup.Auth["type"] != "wxwork" {
 			w.WriteHeader(http.StatusUnauthorized)
 			return
 		}

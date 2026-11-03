@@ -17,11 +17,14 @@ type Group struct {
 	DsExcludeDomains string                 `json:"ds_exclude_domains" xorm:"Text"`
 	DsIncludeDomains string                 `json:"ds_include_domains" xorm:"Text"`
 	LinkAcl          []GroupLinkAcl         `json:"link_acl" xorm:"Text"`
-	Bandwidth        int                    `json:"bandwidth" xorm:"Int"`                           // 带宽限制
-	Auth             map[string]interface{} `json:"auth" xorm:"not null default '{}' varchar(500)"` // 认证方式
-	Status           int8                   `json:"status" xorm:"Int"`                              // 1正常
+	Bandwidth        int                    `json:"bandwidth" xorm:"Int"` // 带宽限制
+	Auth             map[string]interface{} `json:"auth" xorm:"Text"`     // Includes OIDC endpoints and explicit subject mappings.
+	Status           int8                   `json:"status" xorm:"Int"`    // 1正常
 	CreatedAt        time.Time              `json:"created_at" xorm:"DateTime created"`
 	UpdatedAt        time.Time              `json:"updated_at" xorm:"DateTime updated"`
+	AuthRevision     string                 `json:"auth_revision,omitempty" xorm:"-"`
+	SSOSecretSet     bool                   `json:"sso_secret_set" xorm:"-"`
+	SSOSecretAction  string                 `json:"sso_secret_action,omitempty" xorm:"-"`
 }
 
 type User struct {

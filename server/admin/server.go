@@ -97,10 +97,11 @@ func StartAdmin() {
 	r.HandleFunc("/group/names", GroupNames)
 	r.HandleFunc("/group/names_ids", GroupNamesIds)
 	r.HandleFunc("/group/detail", GroupDetail)
-	r.HandleFunc("/group/set", GroupSet)
+	r.HandleFunc("/group/set", GroupSet).Methods(http.MethodPost)
 	r.HandleFunc("/group/del", GroupDel)
 	r.HandleFunc("/group/auth_login", GroupAuthLogin)
 	r.HandleFunc("/group/saveldapusers", SaveLdapUsers)
+	registerGroupSSORoutes(r)
 
 	r.HandleFunc("/statsinfo/list", StatsInfoList)
 	r.HandleFunc("/locksinfo/list", GetLocksInfo)
